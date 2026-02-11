@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+
+# Decrypted / Recovered Data
+*_recovered/
+*_decrypted/
+*.decrypted
+*.bin
+*.png
+*.jpg
+*.mp4
+*.zip
+
+# OS junk
+.DS_Store
+Thumbs.db

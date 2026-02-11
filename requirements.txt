@@ -1,0 +1,2 @@
+pycryptodome
+prompt_toolkit
