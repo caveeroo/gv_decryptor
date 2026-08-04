@@ -91,18 +91,29 @@ constants used by the application.
 A simplified container layout is:
 
 ```text
-encrypted payload area
->>tyfs>>
-optional swapped payload block
-thumbnail length                 8 bytes
-payload/inner-marker boundary    8 bytes
-layout selector                  1 byte
-DES-encrypted XOR key            variable, block aligned
-encrypted-key length             8 bytes
-metadata                         variable
-metadata length                  8 bytes
-version field                    2 bytes (01 01)
-<<tyfs<<
+┌──────────────────── Gallery Vault V2 container ────────────────────┐
+│ Thumbnail prefix │ Encrypted payload                               │
+├────────────────────────────────────────────────────────────────────┤
+│ Inner marker  >>tyfs>>                                             │
+│ Optional swapped payload block                                     │
+├─────────────────────────── Tail metadata ──────────────────────────┤
+│ Thumbnail length              8 bytes                              │
+│ Payload/marker boundary       8 bytes                              │
+│ Layout selector               1 byte                               │
+│ DES-encrypted XOR key         variable, block aligned              │
+│ Encrypted-key length          8 bytes                              │
+│ Metadata                      variable                             │
+│ Metadata length               8 bytes                              │
+│ Version field                 2 bytes (01 01)                      │
+├────────────────────────────────────────────────────────────────────┤
+│ End marker  <<tyfs<<                                               │
+└────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+      validate offsets → recover XOR key → assemble payload
+                              │
+                              ▼
+                    stream recovered asset
 ```
 
 The decryptor validates these offsets and markers before processing a payload.
