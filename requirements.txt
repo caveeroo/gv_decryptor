@@ -1,2 +1,2 @@
-pycryptodome
-prompt_toolkit
+pycryptodome>=3.20,<4
+prompt_toolkit>=3.0.43,<4
