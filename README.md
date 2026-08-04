@@ -1,143 +1,138 @@
 # Gallery Vault Decryptor
 
-> Recovery tool for assets encrypted by the **Gallery Vault (ThinkYeah)** Android application.
+Recovery tool for assets encrypted by the Gallery Vault (ThinkYeah) Android
+application. It supports the V2 container layout documented below and does not
+require the Gallery Vault PIN.
 
-### Requirements
+Only recover data that you own or are authorized to examine.
 
-Install dependencies:
+## Requirements
+
+- Python 3.10 or newer
+- PyCryptodome for the format's DES operations
+- prompt-toolkit for the terminal interface
+
+Install the runtime dependencies:
 
 ```bash
-pip install pycryptodome prompt_toolkit
+python3 -m pip install -r requirements.txt
 ```
 
-* **pycryptodome** — DES master key operations
-* **prompt_toolkit** — TUI interface
+For development and tests:
 
-### Usage
+```bash
+python3 -m pip install -r requirements-dev.txt
+ruff format --check .
+ruff check .
+python3 -m pytest
+```
 
-Simply provide an Android filesystem dump and it will recover all Gallery Vault encrypted files.
+## Usage
 
-**Interactive TUI (recommended):**
+### Interactive terminal interface
 
 ```bash
 python3 gv_tui.py
 ```
 
-Controls: F5 to start discovery & recovery, Tab to cycle configuration fields, F10 to exit.
+Select a dump directory or an individual encrypted file, review the output
+directory, and press F5 or choose **Recover**. F10 requests a safe stop while a
+recovery is active and exits when idle.
 
-**Batch CLI:**
+Smart discovery looks for directories named like
+`.galleryvault_DoNotDelete_123` and processes their `files` directory. Disable
+it to inspect every file beneath the selected path.
+
+### Batch CLI
 
 ```bash
 python3 gv_decryptor.py /path/to/dump --out /path/to/output
 ```
 
-Add `--manual` to skip repository discovery and scan all files recursively.
+Useful options:
 
-### Features
-
-* **Automated Discovery** — scans dumps for hidden repository patterns
-* **Master Key Derivation** — simulates the app’s internal security logic, no PIN required
-* **Magic Byte Detection** — restores correct file extensions upon decryption (`.jpg`, `.png`, `.mp4`, …)
-* **Dual Interface** — interactive TUI for exploration, CLI for batch scripting
-
----
-
-## How It Works
-
-Gallery Vault V2 does **not** encrypt files with your PIN. The PIN only locks the UI. The actual encryption is a **per-file XOR cipher** whose key is protected by a **hardcoded DES master key** baked into the APK. This means full recovery is possible on any device dump, no PIN required.
-
-### V2 File Layout
-
-Each encrypted file follows a fixed binary structure:
-
-```
-┌───────────────────────────────────────────────────────────────┐
-│                    ENCRYPTED FILE (.nomedia)                  │
-├──────────────────┬────────────────────────────────────────────┤
-│  Thumbnail       │  Encrypted Payload                         │
-│  Header          │  (XOR-ciphered asset bytes)                │
-│  (variable)      │                                            │
-├──────────────────┴────────────────────────────────────────────┤
-│                  Inner Marker  >>tyfs>>                       │
-├───────────────────────────────────────────────────────────────┤
-│  Tail Metadata                                                │
-│   ├─ Original file length  (8 bytes)                          │
-│   ├─ Thumbnail size        (8 bytes)                          │
-│   ├─ Check byte            (1 byte)   → selects decode mode   │
-│   └─ Encrypted XOR key     (8 bytes)  → DES-encrypted         │
-├───────────────────────────────────────────────────────────────┤
-│                  End Marker  <<tyfs<<                         │
-└───────────────────────────────────────────────────────────────┘
+```text
+--manual, --scan-all  Scan all files instead of discovering repositories
+--no-recursive       Only scan or discover at the top level
+--overwrite          Replace existing recovered files
+--verbose            Show skipped files and detailed status counts
 ```
 
-### Decryption Pipeline
+An individual encrypted file is also accepted:
 
-The recovery happens in two chained DES stages, then a position-aware XOR pass.
-
-```
-╔══════════════════════════════════════════════════════════════════╗
-║  STAGE 1 — Master Key Derivation  (same for every file)          ║
-╠══════════════════════════════════════════════════════════════════╣
-║                                                                  ║
-║  hardcoded string "good_gv"                                      ║
-║         │                                                        ║
-║         ▼  pad/truncate to 8 bytes                               ║
-║  ┌─────────────┐                                                 ║
-║  │  DES-ECB    │ ◄── hardcoded hex constant (128-bit)            ║
-║  │  decrypt    │                                                 ║
-║  └──────┬──────┘                                                 ║
-║         ▼                                                        ║
-║   master_key_str  (plaintext, embedded in APK)                   ║
-║                                                                  ║
-╠══════════════════════════════════════════════════════════════════╣
-║  STAGE 2 — Per-file XOR Key Recovery  (once per encrypted file)  ║
-╠══════════════════════════════════════════════════════════════════╣
-║                                                                  ║
-║  master_key_str[:8]                                              ║
-║         │                                                        ║
-║         ▼                                                        ║
-║  ┌─────────────┐                                                 ║
-║  │  DES-ECB    │ ◄── encrypted_xor_key  (8 bytes, from tail)     ║
-║  │  decrypt    │                                                 ║
-║  └──────┬──────┘                                                 ║
-║         ▼  take first 4 bytes                                    ║
-║     xor_key  [k0, k1, k2, k3]                                    ║
-║                                                                  ║
-╠══════════════════════════════════════════════════════════════════╣
-║  STAGE 3 — Payload Assembly + XOR Transform                      ║
-╠══════════════════════════════════════════════════════════════════╣
-║                                                                  ║
-║           ┌───────────────────────────────────────┐              ║
-║           │        check_byte  (from tail)        │              ║
-║           └─────────────┬────────────────┬────────┘              ║
-║                    0x00 │           0x01 │                       ║
-║                         ▼                ▼                       ║
-║           ┌─────────────────┐  ┌─────────────────────┐           ║
-║           │  data[thumb_len │  │  swapped_block      │           ║
-║           │    : orig_len]  │  │  (past >>tyfs>>)    │           ║
-║           │  (contiguous)   │  │  +  main_block      │           ║
-║           └────────┬────────┘  └────────────┬────────┘           ║
-║                    └────────────┬───────────┘                    ║
-║                                 ▼                                ║
-║                         assembled payload                        ║
-║                                  │                               ║
-║            ┌───────────────────┼───────────────────┐             ║
-║            ▼                   ▼                   ▼             ║
-║         byte[i]            (i & 0xFF)       xor_key[i % 4]       ║
-║       (ciphertext)       (position salt)   (rotating 4-byte      ║
-║                                            key from stage 2)     ║
-║             │                   │                  │             ║
-║             └─────────► XOR ◄───┘                  │             ║
-║                          │                         │             ║
-║                          └──────────► XOR ◄────────┘             ║
-║                                         ▼                        ║
-║                                 out[i]  →  Original Asset        ║
-║                                                                  ║
-╚══════════════════════════════════════════════════════════════════╝
+```bash
+python3 gv_decryptor.py encrypted_asset --manual
 ```
 
----
+If `--out` is omitted, recovered files go to `INPUT_recovered`. The input tree
+is preserved beneath that directory. Existing files are not overwritten unless
+`--overwrite` is provided, and output is written atomically so a failed or
+cancelled recovery does not leave a partial recovered file.
+
+CLI exit codes are:
+
+- `0`: at least one asset was recovered and no candidate failed
+- `1`: no assets were recovered, or at least one candidate failed
+- `2`: invalid input or output configuration
+
+## Supported output detection
+
+The recovered extension is selected from the file signature. The built-in
+detector recognizes PNG, JPEG, GIF, WebP, MP4, MOV, 3GP, HEIC/HEIF, AVIF, MP3,
+WAV, Ogg, AVI, Matroska, PDF, and ZIP. Unknown content is written as `.bin`.
+
+## How it works
+
+In the supported Gallery Vault V2 format, the PIN protects the application UI;
+the file payload uses a position-dependent XOR transform. Its per-file key is
+stored in the container after being encrypted with a DES key derived from
+constants used by the application.
+
+A simplified container layout is:
+
+```text
+encrypted payload area
+>>tyfs>>
+optional swapped payload block
+thumbnail length                 8 bytes
+payload/inner-marker boundary    8 bytes
+layout selector                  1 byte
+DES-encrypted XOR key            variable, block aligned
+encrypted-key length             8 bytes
+metadata                         variable
+metadata length                  8 bytes
+version field                    2 bytes (01 01)
+<<tyfs<<
+```
+
+The decryptor validates these offsets and markers before processing a payload.
+It then decrypts the per-file key, assembles the payload ranges selected by the
+layout byte, and applies:
+
+```text
+plain[i] = encrypted[i] XOR (i & 0xff) XOR key[i mod key_length]
+```
+
+Files are transformed in chunks, which keeps memory usage bounded for large
+videos. Smart discovery and all-file scanning use the same implementation in
+the CLI and TUI.
+
+## Compatibility and troubleshooting
+
+- `UNSUPPORTED_VERSION` means the file has Gallery Vault markers but does not
+  contain the supported V2 version field.
+- `CORRUPT_STRUCTURE` means a marker, length, or payload boundary is invalid.
+- `NOT_GV` means the Gallery Vault end marker was not found near the file tail.
+- `EXISTS` means the destination was preserved; use `--overwrite` only when the
+  replacement is intentional.
+- Use `--verbose` when scanning a mixed directory to see detailed statuses.
+
+Gallery Vault has had multiple releases and storage layouts. Compatibility is
+limited to files matching the V2 structure above; keep the original encrypted
+data until the recovered files have been verified.
 
 ## Disclaimer
 
-This tool is provided for **educational and forensic purposes only**. The author bears no responsibility for misuse. Always ensure you have proper authorization before decrypting data that does not belong to you.
+This tool is provided for educational and forensic purposes only. The author
+bears no responsibility for misuse. Always ensure you have proper authorization
+before decrypting data that does not belong to you.
